@@ -579,62 +579,230 @@ def _creation_time_input(dialog: Locator) -> Locator:
     return inp.first
 
 
-def _creation_time_is_set(dialog: Locator, value: str) -> bool:
+def _creation_time_current(page: Page, dialog: Locator) -> str:
+    result = page.evaluate(
+        """(placeholder) => {
+            const dialog = document.querySelector('section.dioa-dialog__content');
+            if (!dialog) return '';
+            const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+            const inputs = dialog.querySelectorAll(
+                'input[role="combobox"], input.dioa-input__field'
+            );
+            for (const inp of inputs) {
+                let node = inp;
+                for (let i = 0; i < 14 && node; i++) {
+                    const t = norm(node.textContent || '');
+                    if (t.includes('创作时间') && !t.includes('AI推荐')) {
+                        return norm(inp.value || '');
+                    }
+                    node = node.parentElement;
+                }
+            }
+            return '';
+        }""",
+        CREATION_TIME_PLACEHOLDER,
+    )
+    if result:
+        return result
     inp = _creation_time_input(dialog)
     if inp.count() == 0:
-        return False
-    current = inp.input_value().strip()
+        return ""
+    return inp.input_value().strip()
+
+
+def _creation_time_is_set(page: Page, dialog: Locator, value: str) -> bool:
+    current = _creation_time_current(page, dialog)
     if not current or CREATION_TIME_PLACEHOLDER in current:
         return False
     return current == value or value in current
 
 
-def _select_creation_time_option(page: Page, value: str) -> None:
-    """创作时间为 combobox + 弹出年份列表，必须点击选项。"""
-    option = page.get_by_role("option", name=value, exact=True)
-    if option.count() == 0:
-        option = page.locator("div.dioa-select__option").filter(has_text=value)
-    if option.count() == 0:
-        option = page.locator(f"div[role='option']:has-text('{value}')")
-    if option.count() == 0:
-        raise RuntimeError(f"未找到创作时间选项: {value}")
-    option.first.click(force=True)
+def _open_creation_time_dropdown(page: Page, dialog: Locator) -> None:
+    opened = page.evaluate(
+        """() => {
+            const dialog = document.querySelector('section.dioa-dialog__content');
+            if (!dialog) return false;
+            const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+            let input = null;
+            for (const inp of dialog.querySelectorAll(
+                'input[role="combobox"], input.dioa-input__field'
+            )) {
+                let node = inp;
+                for (let i = 0; i < 14 && node; i++) {
+                    const t = norm(node.textContent || '');
+                    if (t.includes('创作时间') && !t.includes('AI推荐')) {
+                        input = inp;
+                        break;
+                    }
+                    node = node.parentElement;
+                }
+                if (input) break;
+            }
+            if (!input) return false;
+            input.scrollIntoView({ block: 'center' });
+            input.focus();
+            input.click();
+            const wrap = input.closest('.dioa-select, [class*="select"]') || input;
+            wrap.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+            wrap.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            return true;
+        }"""
+    )
+    if not opened:
+        inp = _creation_time_input(dialog)
+        if inp.count() == 0:
+            raise RuntimeError("未找到「创作时间」下拉框。")
+        inp.scroll_into_view_if_needed()
+        inp.click(force=True)
+    page.wait_for_timeout(700)
+
+
+def _click_creation_time_year_option(page: Page, value: str) -> bool:
+    """在已展开的下拉列表中点击与本地设置一致的年份。"""
+    return bool(
+        page.evaluate(
+            """(args) => {
+                const { year, placeholder } = args;
+                const dialog = document.querySelector('section.dioa-dialog__content');
+                if (!dialog) return false;
+                const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+                const isVisible = (el) => {
+                    if (!el) return false;
+                    const st = getComputedStyle(el);
+                    if (st.display === 'none' || st.visibility === 'hidden') return false;
+                    const r = el.getBoundingClientRect();
+                    return r.width > 2 && r.height > 2;
+                };
+                const dialogRect = dialog.getBoundingClientRect();
+                const candidates = [];
+                for (const el of document.querySelectorAll(
+                    'div, li, span, p, button, [role="option"]'
+                )) {
+                    let text = norm(el.textContent);
+                    if (el.children.length === 1) {
+                        const child = el.children[0];
+                        if (child && child.children.length === 0) {
+                            text = norm(child.textContent);
+                        }
+                    }
+                    if (text !== year) continue;
+                    if (!isVisible(el)) continue;
+                    if (norm(el.textContent || '').includes(placeholder)) continue;
+                    const r = el.getBoundingClientRect();
+                    const cx = (dialogRect.left + dialogRect.right) / 2;
+                    const cy = (dialogRect.top + dialogRect.bottom) / 2;
+                    const mx = Math.abs((r.left + r.right) / 2 - cx);
+                    const my = Math.abs((r.top + r.bottom) / 2 - cy);
+                    if (mx > 420 || my > 520) {
+                        continue;
+                    }
+                    let score = 0;
+                    let p = el;
+                    while (p) {
+                        const cn = (p.className || '').toString();
+                        if (/menu|popover|dropdown|select|option|listbox|float|portal|picker|virtual/i.test(cn)) {
+                            score += 10;
+                        }
+                        p = p.parentElement;
+                    }
+                    if (el.tagName === 'INPUT') score -= 100;
+                    score -= el.children.length;
+                    candidates.push({ el, score, area: r.width * r.height });
+                }
+                if (!candidates.length) return false;
+                candidates.sort((a, b) => b.score - a.score || a.area - b.area);
+                const target = candidates[0].el;
+                target.scrollIntoView({ block: 'nearest' });
+                target.click();
+                return true;
+            }""",
+            {"year": value, "placeholder": CREATION_TIME_PLACEHOLDER},
+        )
+    )
+
+
+def _list_visible_creation_years(page: Page) -> list[str]:
+    years = page.evaluate(
+        """() => {
+            const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+            const isVisible = (el) => {
+                if (!el) return false;
+                const st = getComputedStyle(el);
+                if (st.display === 'none' || st.visibility === 'hidden') return false;
+                const r = el.getBoundingClientRect();
+                return r.width > 2 && r.height > 2;
+            };
+            const out = [];
+            for (const el of document.querySelectorAll('div, li, span, p, [role="option"]')) {
+                const t = norm(el.textContent);
+                if (!/^20\\d{2}$/.test(t)) continue;
+                if (!isVisible(el)) continue;
+                out.push(t);
+            }
+            return [...new Set(out)];
+        }"""
+    )
+    return years if isinstance(years, list) else []
 
 
 def _set_creation_time(
     page: Page, dialog: Locator, value: str, *, log
 ) -> None:
-    """按配置的创作时间打开下拉并点击对应选项。"""
+    """打开创作时间下拉，从选项列表点击与本地设置相同的年份。"""
     value = value.strip()
     if not value:
         raise RuntimeError("创作时间为空，请在界面「本地设置」中填写。")
-    inp = _creation_time_input(dialog)
-    if inp.count() == 0:
-        raise RuntimeError("未找到「创作时间」下拉框。")
 
-    if _creation_time_is_set(dialog, value):
+    if _creation_time_is_set(page, dialog, value):
         log(f"  创作时间: {value}（已是目标值）")
         return
 
-    inp.scroll_into_view_if_needed()
-    inp.click(force=True)
-    page.wait_for_timeout(400)
-    _select_creation_time_option(page, value)
-    page.wait_for_timeout(300)
+    last_error = ""
+    for _ in range(3):
+        _open_creation_time_dropdown(page, dialog)
+        if _click_creation_time_year_option(page, value):
+            page.wait_for_timeout(400)
+            if _creation_time_is_set(page, dialog, value):
+                log(f"  创作时间: {value}")
+                return
 
-    if not _creation_time_is_set(dialog, value):
-        inp.click(force=True)
-        page.wait_for_timeout(400)
-        _select_creation_time_option(page, value)
-        page.wait_for_timeout(300)
+        year_loc = page.get_by_text(value, exact=True)
+        for i in range(year_loc.count()):
+            item = year_loc.nth(i)
+            try:
+                if not item.is_visible():
+                    continue
+                box = item.bounding_box()
+                if not box:
+                    continue
+                item.click(force=True)
+                page.wait_for_timeout(400)
+                if _creation_time_is_set(page, dialog, value):
+                    log(f"  创作时间: {value}")
+                    return
+            except Exception:
+                continue
 
-    if not _creation_time_is_set(dialog, value):
-        current = inp.input_value().strip()
-        raise RuntimeError(
-            f"创作时间未选中 {value}（当前显示: {current or '空/占位符'}）"
-        )
+        inp = _creation_time_input(dialog)
+        if inp.count() > 0:
+            inp.click(force=True)
+            page.wait_for_timeout(300)
+            page.keyboard.press("Control+A")
+            page.keyboard.type(value, delay=60)
+            page.wait_for_timeout(200)
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(400)
+            if _creation_time_is_set(page, dialog, value):
+                log(f"  创作时间: {value}")
+                return
 
-    log(f"  创作时间: {value}")
+        last_error = _creation_time_current(page, dialog) or "空/占位符"
+
+    visible = _list_visible_creation_years(page)
+    hint = f"；页面可见年份: {', '.join(visible)}" if visible else ""
+    raise RuntimeError(
+        f"未从创作时间下拉选中 {value}（当前显示: {last_error}{hint}）"
+    )
 
 
 def _select_dioa_option(

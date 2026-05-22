@@ -71,7 +71,7 @@ def save_login_state(context: BrowserContext, path: Path | None = None) -> None:
     """保存登录信息到单个 JSON 文件。"""
     target = path or login_file_path()
     target.parent.mkdir(parents=True, exist_ok=True)
-    context.storage_state(path=str(target), indexedDB=True)
+    context.storage_state(path=str(target), indexed_db=True)
 
 
 def ensure_logged_in(
