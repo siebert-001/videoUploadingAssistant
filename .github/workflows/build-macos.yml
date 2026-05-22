@@ -37,7 +37,7 @@ jobs:
 
       - name: Build App
         run: |
-          pyinstaller --onefile --windowed --name "ZhipuVideoTool" main.py
+          pyinstaller --onefile --windowed --name "VjshiVideoTool" main.py
 
       - name: Zip App
         run: |
