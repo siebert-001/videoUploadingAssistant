@@ -2,30 +2,74 @@
 from __future__ import annotations
 
 import copy
+import os
 import sys
 from pathlib import Path
 
-if getattr(sys, "frozen", False):
-    APP_ROOT = Path(sys.executable).resolve().parent
-else:
-    APP_ROOT = Path(__file__).resolve().parent.parent
+# 用户数据目录名（macOS Application Support 等，使用 ASCII 避免路径问题）
+APP_ID = "VjshiVideoTool"
 
-ROOT = APP_ROOT
+if getattr(sys, "frozen", False):
+    BUNDLE_DIR = Path(sys.executable).resolve().parent
+else:
+    BUNDLE_DIR = Path(__file__).resolve().parent.parent
+
+# 兼容旧代码引用
+APP_ROOT = BUNDLE_DIR
+ROOT = BUNDLE_DIR
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
+
+LOGIN_FILENAME = "login.json"
+
+
+def _is_bundle_writable() -> bool:
+    """Windows 单文件 exe 旁通常可写；macOS .app 内 MacOS 目录只读。"""
+    if not getattr(sys, "frozen", False):
+        return True
+    if sys.platform == "darwin":
+        exe = Path(sys.executable).resolve()
+        if exe.parent.name == "MacOS" and ".app" in str(exe):
+            return False
+    try:
+        probe = BUNDLE_DIR / ".write_probe"
+        probe.write_text("1", encoding="utf-8")
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
+def data_dir() -> Path:
+    """
+    可写数据目录：
+    - 开发环境：项目根目录
+    - Windows 打包：exe 同目录（可写时）
+    - macOS .app / 只读位置：~/Library/Application Support/APP_ID
+    """
+    if not getattr(sys, "frozen", False):
+        return BUNDLE_DIR
+    if _is_bundle_writable():
+        return BUNDLE_DIR
+    if sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    elif sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home())) / APP_ID
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / APP_ID
+    path = base / APP_ID
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def resource_path(relative: str) -> Path:
     """打包后从 _MEIPASS 取资源，开发时从项目 assets/ 取。"""
     if getattr(sys, "frozen", False):
-        base = Path(getattr(sys, "_MEIPASS", APP_ROOT))
+        base = Path(getattr(sys, "_MEIPASS", BUNDLE_DIR))
     else:
         base = ASSETS_DIR.parent
     return base / relative
 
-
-# 登录成功后生成在 exe 同目录的单个文件
-LOGIN_FILENAME = "login.json"
 
 # ---------------------------------------------------------------------------
 # 内置默认参数（无需外部 settings.yaml）
@@ -69,12 +113,13 @@ def _build_settings() -> dict:
 
 
 def init_app() -> None:
-    """无需预建目录；登录成功后才会生成 login.json。"""
-    return
+    """确保用户数据目录存在（macOS 等）。"""
+    if getattr(sys, "frozen", False):
+        data_dir()
 
 
 def login_file_path() -> Path:
-    return APP_ROOT / LOGIN_FILENAME
+    return data_dir() / LOGIN_FILENAME
 
 
 def setup_playwright_env() -> None:
@@ -83,7 +128,7 @@ def setup_playwright_env() -> None:
 
     if BROWSER_CHANNEL:
         return
-    browsers_dir = APP_ROOT / "ms-playwright"
+    browsers_dir = data_dir() / "ms-playwright"
     browsers_dir.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(browsers_dir))
 
@@ -93,4 +138,8 @@ def load_settings() -> dict:
 
 
 def resolve_path(relative: str) -> Path:
-    return APP_ROOT / relative
+    """相对路径解析到可写数据目录（如 login.json）。"""
+    rel = relative.strip().replace("\\", "/")
+    if rel in (LOGIN_FILENAME, f"auth/{LOGIN_FILENAME}"):
+        return login_file_path()
+    return data_dir() / rel
