@@ -1,0 +1,13 @@
+.venv/
+venv/
+build/
+dist/
+*.spec.bak
+__pycache__/
+*.pyc
+.pytest_cache/
+login.json
+data/
+config/
+logs/
+*.log
