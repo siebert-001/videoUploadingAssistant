@@ -1,26 +1,33 @@
 name: Build Mac App
 
 on:
-  workflow_dispatch: # 允许手动触发打包
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: macos-latest # 用Mac服务器打包
+    runs-on: macos-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
 
       - name: Setup Python 3.13
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13" # 和你本地版本保持一致
+          python-version: "3.13"
 
-      # 缓存依赖，下次打包速度翻倍
       - name: Cache pip dependencies
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+
+      # 关键：先检查文件是否存在，再安装依赖
+      - name: Check files
+        run: |
+          ls -la
+          if [ ! -f "main.py" ]; then
+            echo "ERROR: main.py not found!"
+            exit 1
+          fi
 
       - name: Install dependencies
         run: |
@@ -28,17 +35,16 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build .app with PyInstaller
+      - name: Build App
         run: |
-          pyinstaller --onefile --windowed --name "vjshiVideoUpload" main.py
+          pyinstaller --onefile --windowed --name "ZhipuVideoTool" main.py
 
-      # 关键：先压缩再上传，Windows/Mac都能正常识别.app包
-      - name: Zip the app
+      - name: Zip App
         run: |
           cd dist
           zip -r ZhipuVideoTool.zip ZhipuVideoTool.app
 
-      - name: Upload the app as artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v5
         with:
           name: ZhipuVideoTool-Mac
