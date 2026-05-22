@@ -20,7 +20,7 @@ python main.py
 
 1. 在「视频信息」→「本地设置」中填写个人授权价（默认 80）、创作时间（默认 2026，需与网页下拉选项一致）；其余字段由程序自动填写。
 2. 点击 **开始上架**，自动打开浏览器并处理列表中全部待上架视频。
-3. 若未登录，在浏览器中完成微信扫码，然后点击 **登录完成，继续上架**（登录保存在 exe 同目录的 **`login.json`**，下次自动加载）。
+3. 若未登录，在浏览器中完成微信扫码，然后点击 **登录完成，继续上架**（登录写入 **`login.json`**，下次自动加载；Windows 在 exe 旁，macOS 在 `~/Library/Application Support/VjshiVideoTool/`）。
 4. 运行中按钮变为 **停止上架**，点击可中断自动化。
 5. 每个视频填写完成后自动点击 **提交**，再处理列表中下一个；列表全部提交完成后停止。
 6. 要改间隔、是否提交、去自动化等：编辑 `src/config.py` 顶部常量后重新运行或重新打包。
@@ -41,7 +41,7 @@ pip install -r requirements.txt
 
 ## 配置
 
-**全部写死在 `src/config.py`**，不读任何外部 yaml。正常运行后只会多一个 **`login.json`**（登录信息）。
+**全部写死在 `src/config.py`**，不读任何外部 yaml。登录信息写入 **`login.json`**（Windows：exe 同目录；macOS：`~/Library/Application Support/VjshiVideoTool/login.json`）。
 
 | 想改什么 | 改哪里 |
 |----------|--------|
@@ -64,6 +64,12 @@ pip install -r requirements.txt
 - 分发单个 exe 即可；首次登录后同目录生成 `login.json`
 
 改参数请编辑 `src/config.py` 后重新执行 `build.bat` 打包。
+
+## macOS 打包说明
+
+- `.app` 包内 **MacOS 目录只读**（含 App Translocation），不能把 `login.json` 写在应用里；程序会自动写到 `~/Library/Application Support/VjshiVideoTool/login.json`。
+- 建议将 `.app` **拖入「应用程序」** 再打开，避免从下载目录直接运行触发只读临时路径。
+- 需本机已安装 **Google Chrome**。
 
 ## 任务栏 / exe 图标
 
