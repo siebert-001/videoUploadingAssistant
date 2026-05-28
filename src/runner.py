@@ -10,7 +10,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
 
 from src.auth import ensure_logged_in, open_browser_context
-from src.config import init_app, load_settings, resolve_path, setup_playwright_env
+from src.config import init_app, load_settings, setup_playwright_env
 from src.exceptions import AutomationCancelled
 from src.field_settings import VideoFieldSettings
 from src.upload_list import (
@@ -228,10 +228,6 @@ class AutomationRunner:
         setup_playwright_env()
         settings = load_settings()
         url = settings["site"]["upload_list_url"]
-        storage = resolve_path(
-            settings["auth"].get("login_file", "login.json")
-        )
-
         timeout = settings["browser"]["timeout_ms"]
         delay = settings["actions"]["delay_between_clicks_ms"]
         actions_cfg = settings["actions"]
@@ -269,8 +265,6 @@ class AutomationRunner:
             ensure_logged_in(
                 self._page,
                 upload_list_url=url,
-                storage_path=storage,
-                settings=settings,
                 on_log=self._log,
                 wait_login_confirm=self._cb.wait_login_confirm,
                 is_cancelled=self._should_stop,

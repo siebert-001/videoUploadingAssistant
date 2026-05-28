@@ -6,6 +6,7 @@ import re
 
 from playwright.sync_api import Locator, Page
 
+from src.exceptions import VideoSkipError
 from src.field_settings import VideoFieldSettings
 
 DIALOG_SELECTOR = "section.dioa-dialog__content"
@@ -288,6 +289,65 @@ def _trim_keywords_to_exact(page: Page, dialog: Locator, *, exact: int) -> None:
         raise RuntimeError(f"关键词仍有 {n} 个，无法缩减到 {exact} 个。")
 
 
+def _ai_title_option_count(dialog: Locator) -> int:
+    """AI 推荐标题可点击项数量（无则 0）。"""
+    containers = (
+        "xpath=.//*[contains(text(),'AI推荐标题')]/following::div[contains(@class,'flex')][1]",
+        "xpath=.//*[contains(text(),'AI推荐标题')]/parent::*/following-sibling::div[1]",
+    )
+    for xpath in containers:
+        container = dialog.locator(xpath)
+        if container.count() == 0:
+            continue
+        buttons = container.locator("button")
+        n = 0
+        for i in range(buttons.count()):
+            try:
+                if buttons.nth(i).inner_text().strip():
+                    n += 1
+            except Exception:
+                continue
+        if n > 0:
+            return n
+    return 0
+
+
+def _eligible_ai_keyword_count(dialog: Locator) -> int:
+    """AI 推荐关键词可用数量（已排除含「循环」）。"""
+    containers = (
+        "xpath=.//*[contains(text(),'AI推荐关键词')]/following::div[contains(@class,'flex')][1]",
+        "xpath=.//*[contains(text(),'AI推荐关键词')]/parent::*/following-sibling::div[1]",
+    )
+    for xpath in containers:
+        container = dialog.locator(xpath)
+        if container.count() == 0:
+            continue
+        buttons = container.locator("button")
+        n = 0
+        for i in range(buttons.count()):
+            try:
+                text = buttons.nth(i).inner_text().strip()
+            except Exception:
+                continue
+            if text and _is_keyword_allowed(text):
+                n += 1
+        return n
+    return 0
+
+
+def _ensure_ai_recommendations_available(dialog: Locator) -> None:
+    """无 AI 标题或完全无 AI 关键词时跳过本视频。"""
+    titles = _ai_title_option_count(dialog)
+    keywords = _eligible_ai_keyword_count(dialog)
+    reasons: list[str] = []
+    if titles == 0:
+        reasons.append("无 AI 推荐标题")
+    if keywords == 0:
+        reasons.append("无 AI 推荐关键词")
+    if reasons:
+        raise VideoSkipError("，".join(reasons))
+
+
 def _get_eligible_ai_keyword_buttons(
     dialog: Locator,
 ) -> list[tuple[str, Locator]]:
@@ -299,7 +359,12 @@ def _get_eligible_ai_keyword_buttons(
             "xpath=.//*[contains(text(),'AI推荐关键词')]/parent::*/following-sibling::div[1]"
         )
     buttons = container.locator("button")
-    buttons.first.wait_for(state="visible", timeout=10000)
+    if buttons.count() == 0:
+        return []
+    try:
+        buttons.first.wait_for(state="visible", timeout=10000)
+    except Exception:
+        return []
 
     eligible: list[tuple[str, Locator]] = []
     for i in range(buttons.count()):
@@ -332,8 +397,8 @@ def _click_ai_keyword_if_needed(
         remaining = [(t, b) for t, b in eligible if t not in in_field]
         if not remaining:
             raise RuntimeError(
-                f"AI推荐关键词可选项不足（需 {target} 个、已排除含「{KEYWORDS_EXCLUDED_SUBSTR}」），"
-                f"当前已有 {len(current)} 个: {'、'.join(current) or '无'}"
+                f"AI 推荐关键词可选项不足（需 {target} 个、已排除含「{KEYWORDS_EXCLUDED_SUBSTR}」），"
+                f"当前已有 {len(current)} 个"
             )
 
         text, btn = random.choice(remaining)
@@ -361,18 +426,17 @@ def _validate_keywords_final(
 
 
 def _fill_keywords(page: Page, dialog: Locator, *, log) -> list[str]:
-    """规则：随机 5–10 个，且任一关键词不得包含「循环」。"""
-    target = random.randint(KEYWORDS_COUNT_MIN, KEYWORDS_COUNT_MAX)
-    log(f"  关键词: 本次随机选取 {target} 个")
+    """规则：随机 5–10 个（不超过 AI 推荐数量），且任一关键词不得包含「循环」。"""
     _clear_keywords_field(page, dialog, log=log)
     if _keyword_count(dialog) != 0:
         raise RuntimeError("关键词清空后仍有残留，无法继续填写。")
     eligible = _get_eligible_ai_keyword_buttons(dialog)
-    if len(eligible) < target:
-        raise RuntimeError(
-            f"AI推荐关键词可选项不足 {target} 个（已排除含「{KEYWORDS_EXCLUDED_SUBSTR}」的项，"
-            f"当前可选 {len(eligible)} 个）"
-        )
+    if len(eligible) == 0:
+        raise VideoSkipError("无 AI 推荐关键词")
+
+    target = random.randint(KEYWORDS_COUNT_MIN, KEYWORDS_COUNT_MAX)
+    target = min(target, len(eligible))
+    log(f"  关键词: 本次选取 {target} 个（AI 推荐可选 {len(eligible)} 个）")
 
     _click_ai_keyword_if_needed(page, dialog, eligible, target=target)
     _remove_forbidden_keywords(page, dialog)
@@ -394,6 +458,8 @@ def fill_video_form(page: Page, settings: VideoFieldSettings, *, on_log=None) ->
         _ensure_edit_dialog_open(page)
 
     _clear_title_field(page, dialog, log=log)
+
+    _ensure_ai_recommendations_available(dialog)
 
     # 1. 标题：从「AI推荐标题」中随机点选（可能触发页面自动填关键词）
     _select_random_ai_title(page, dialog, log=log)
@@ -555,10 +621,13 @@ def _select_random_ai_title(page: Page, dialog: Locator, *, log) -> str:
             "xpath=.//*[contains(text(),'AI推荐标题')]/parent::*/following-sibling::div[1]"
         )
     buttons = container.locator("button")
-    buttons.first.wait_for(state="visible", timeout=10000)
     count = buttons.count()
     if count == 0:
-        raise RuntimeError("未找到 AI 推荐标题选项，请确认弹窗已加载。")
+        raise VideoSkipError("无 AI 推荐标题")
+    try:
+        buttons.first.wait_for(state="visible", timeout=10000)
+    except Exception as exc:
+        raise VideoSkipError("无 AI 推荐标题") from exc
     chosen = buttons.nth(random.randrange(count))
     title = chosen.inner_text().strip()
     chosen.click(force=True)

@@ -447,8 +447,9 @@ class MainWindow(QMainWindow):
         grid.addWidget(_label("关键词"), row, 0, Qt.AlignmentFlag.AlignTop)
         grid.addWidget(
             _hint(
-                "随机 5–10 个：从「AI推荐关键词」随机选取\n"
-                "任一关键词不得包含「循环」"
+                "随机 5–10 个：从「AI推荐关键词」随机选取（不足则全选）\n"
+                "任一关键词不得包含「循环」\n"
+                "无 AI 推荐标题或关键词时跳过并标注"
             ),
             row,
             1,
@@ -534,6 +535,8 @@ class MainWindow(QMainWindow):
             return C_PRIMARY
         if re.search(r"第\s*\d+\s*个视频信息已提交", msg):
             return C_SUCCESS
+        if "已跳过" in msg or "跳过" in msg:
+            return C_MUTED
         if "失败" in msg or "出错" in msg or "中断" in msg:
             return C_DANGER
         if "已无待上架" in msg or "全部处理完成" in msg:

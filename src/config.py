@@ -20,9 +20,6 @@ ROOT = BUNDLE_DIR
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 
-LOGIN_FILENAME = "login.json"
-
-
 def _is_bundle_writable() -> bool:
     """Windows 单文件 exe 旁通常可写；macOS .app 内 MacOS 目录只读。"""
     if not getattr(sys, "frozen", False):
@@ -101,7 +98,6 @@ def _build_settings() -> dict:
             "reduce_automation_flags": BROWSER_REDUCE_AUTOMATION_FLAGS,
             "no_viewport": BROWSER_NO_VIEWPORT,
         },
-        "auth": {"login_file": LOGIN_FILENAME},
         "actions": {
             "delay_between_clicks_ms": DELAY_BETWEEN_CLICKS_MS,
             "pause_between_videos_sec_min": PAUSE_BETWEEN_VIDEOS_SEC_MIN,
@@ -113,13 +109,7 @@ def _build_settings() -> dict:
 
 
 def init_app() -> None:
-    """确保用户数据目录存在（macOS 等）。"""
-    if getattr(sys, "frozen", False):
-        data_dir()
-
-
-def login_file_path() -> Path:
-    return data_dir() / LOGIN_FILENAME
+    return
 
 
 def setup_playwright_env() -> None:
@@ -138,8 +128,4 @@ def load_settings() -> dict:
 
 
 def resolve_path(relative: str) -> Path:
-    """相对路径解析到可写数据目录（如 login.json）。"""
-    rel = relative.strip().replace("\\", "/")
-    if rel in (LOGIN_FILENAME, f"auth/{LOGIN_FILENAME}"):
-        return login_file_path()
-    return data_dir() / rel
+    return data_dir() / relative.strip().replace("\\", "/")

@@ -3,9 +3,10 @@ from typing import Callable
 
 from playwright.sync_api import Locator, Page, expect
 
-from src.exceptions import AutomationCancelled
+from src.exceptions import AutomationCancelled, VideoSkipError
 from src.field_settings import VideoFieldSettings
 from src.form_filler import fill_video_form
+from src.video_identity import PendingVideo, list_pending_videos, mark_video_skipped
 
 LIST_READY_SELECTOR = "div.aspect-video.group, div.group.min-w-\\[320px\\]"
 DIALOG_HEADER = "视频编辑"
@@ -150,19 +151,37 @@ def process_all_pending(
         return 0
 
     submitted = 0
+    skipped = 0
     failed = False
     step = 0
+    skipped_keys: set[str] = set()
+
+    def next_video() -> PendingVideo | None:
+        for entry in list_pending_videos(page):
+            if entry.key and entry.key not in skipped_keys:
+                return entry
+        return None
 
     while count_pending_videos(page) > 0:
         if cancelled():
             raise AutomationCancelled()
+
+        target = next_video()
+        if target is None:
+            remaining = count_pending_videos(page)
+            if on_log and remaining > 0:
+                on_log(
+                    f"剩余 {remaining} 个待上架视频均已标注跳过，结束本轮"
+                    f"（成功提交 {submitted} 个，跳过 {skipped} 个）"
+                )
+            break
 
         step += 1
         if on_progress:
             on_progress(step, total)
 
         try:
-            open_edit_dialog_for_index(page, index=0)
+            open_edit_dialog_for_index(page, index=target.index)
             page.wait_for_timeout(delay_ms)
             wait_for_edit_dialog(page, timeout_ms=timeout_ms)
 
@@ -190,10 +209,23 @@ def process_all_pending(
                 lo, hi = pause_between_videos_sec
                 rest_sec = random.uniform(lo, hi)
                 page.wait_for_timeout(int(rest_sec * 1000))
+        except VideoSkipError as e:
+            skipped += 1
+            skipped_keys.add(target.key)
+            close_edit_dialog_if_open(page)
+            ensure_page_scrollable(page)
+            marked = mark_video_skipped(page, target.key, str(e))
+            label = target.label or target.key
+            if on_log:
+                mark_note = "，列表已标注" if marked else ""
+                on_log(f"第 {step} 个视频已跳过: {e}（{label}{mark_note}）")
+            page.wait_for_timeout(delay_ms)
+            continue
         except AutomationCancelled:
             raise
         except Exception as e:
             failed = True
+            close_edit_dialog_if_open(page)
             ensure_page_scrollable(page)
             if on_log:
                 on_log(f"第 {step} 个视频处理失败: {e}")
@@ -202,9 +234,12 @@ def process_all_pending(
     ensure_page_scrollable(page)
     if on_log:
         if failed:
-            on_log(f"已中断，成功提交 {submitted} 个")
+            on_log(f"已中断，成功提交 {submitted} 个，跳过 {skipped} 个")
         elif submitted:
-            on_log(f"列表已无待上架视频，共提交 {submitted} 个")
+            suffix = f"，跳过 {skipped} 个" if skipped else ""
+            on_log(f"列表已无待上架视频，共提交 {submitted} 个{suffix}")
+        elif skipped:
+            on_log(f"未提交任何视频，已跳过 {skipped} 个（无 AI 推荐）")
         elif step > 0:
             on_log("未成功提交任何视频")
 
