@@ -33,6 +33,6 @@ echo   打包完成
 echo   文件: dist\光厂视频上架助手.exe
 echo   要求: 已安装 Google Chrome
 echo   说明: 首次启动略慢（需解压临时文件）
-echo   登录: 首次登录后生成 login.json（与 exe 同目录）
+echo   登录: 每次运行需在浏览器中手动登录
 echo ========================================
 pause
