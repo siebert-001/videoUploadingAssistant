@@ -26,6 +26,7 @@ hiddenimports = [
     "src.exceptions",
     "src.app_icon",
     "src.upload_page",
+    "src.page_eval",
     "PySide6.QtCore",
     "PySide6.QtGui",
     "PySide6.QtWidgets",

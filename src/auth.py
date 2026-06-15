@@ -1,17 +1,26 @@
+from pathlib import Path
 from typing import Callable
 
 from playwright.sync_api import Browser, BrowserContext, Error as PlaywrightError, Page, Playwright
 
 from src.browser_stealth import apply_stealth, stealth_launch_kwargs
+from src.config import login_file_path, login_file_exists
 
 LogFn = Callable[[str], None]
 CancelFn = Callable[[], bool]
 LoginWaitFn = Callable[[], None]
 
 
+def save_login_state(context: BrowserContext, path: Path | None = None) -> None:
+    target = path or login_file_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    context.storage_state(path=str(target), indexed_db=True)
+
+
 def open_browser_context(playwright: Playwright, *, settings: dict) -> BrowserContext:
-    """启动本机 Chrome（每次新会话，不加载已保存的登录态）。"""
+    """启动本机 Chrome；若有 login.json 则自动带上登录态。"""
     browser_cfg = settings["browser"]
+    login_path = login_file_path()
 
     launch_kwargs: dict = {
         "headless": browser_cfg.get("headless", False),
@@ -37,6 +46,9 @@ def open_browser_context(playwright: Playwright, *, settings: dict) -> BrowserCo
     if viewport and not no_viewport:
         context_kwargs["viewport"] = viewport
         context_kwargs.pop("no_viewport", None)
+
+    if login_file_exists():
+        context_kwargs["storage_state"] = str(login_path)
 
     try:
         browser: Browser = playwright.chromium.launch(**launch_kwargs)
@@ -64,14 +76,18 @@ def ensure_logged_in(
     is_cancelled: CancelFn | None = None,
     navigation_timeout_ms: int = 30000,
 ) -> None:
-    """未登录时等待用户在浏览器中手动登录，不保存 cookie。"""
+    """未登录时等待手动登录，成功后保存 login.json。"""
     _log = on_log or print
+    login_path = login_file_path()
 
     _goto(page, upload_list_url, timeout_ms=navigation_timeout_ms, is_cancelled=is_cancelled)
-    _sleep(page, 800, is_cancelled=is_cancelled)
+    _sleep(page, 300, is_cancelled=is_cancelled)
 
     if _is_logged_out(page):
-        _log("请在浏览器中完成登录（微信扫码等）。")
+        if login_file_exists():
+            _log("本地登录已过期，请在浏览器中重新登录。")
+        else:
+            _log("请在浏览器中完成登录（微信扫码等）。")
         _wait_for_manual_login(
             page,
             upload_list_url=upload_list_url,
@@ -80,8 +96,15 @@ def ensure_logged_in(
             is_cancelled=is_cancelled,
             navigation_timeout_ms=navigation_timeout_ms,
         )
+        page = _resolve_page(page)
+        save_login_state(page.context, login_path)
+        _log("已保存登录信息，下次可自动登录。")
     else:
-        _log("已登录。")
+        if login_file_exists():
+            _log("已使用本地登录信息。")
+        else:
+            _log("已登录。")
+        save_login_state(_resolve_page(page).context, login_path)
 
 
 def _resolve_page(page: Page) -> Page:
@@ -110,6 +133,8 @@ def _goto(
 
         raise AutomationCancelled()
     page = _resolve_page(page)
+    if url in page.url:
+        return
     page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
 
 
@@ -167,7 +192,7 @@ def _wait_for_manual_login(
             raise AutomationCancelled()
         page = _resolve_page(page)
         _goto(page, upload_list_url, timeout_ms=navigation_timeout_ms, is_cancelled=is_cancelled)
-        _sleep(page, 500, is_cancelled=is_cancelled)
+        _sleep(page, 200, is_cancelled=is_cancelled)
         _wait_until_logged_in(
             page,
             on_log=on_log,

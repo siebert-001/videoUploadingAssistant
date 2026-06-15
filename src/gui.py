@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.app_icon import apply_app_icon, load_app_icon
+from src.config import clear_login_file
 from src.exceptions import AutomationCancelled
 from src.field_settings import (
     DEFAULT_CREATION_TIME,
@@ -162,6 +163,22 @@ def _stylesheet() -> str:
         border: none;
         border-radius: 8px;
         padding: 4px;
+    }}
+    QPushButton#secondaryBtn {{
+        font-family: "{f}";
+        font-size: 14px;
+        font-weight: 500;
+        color: {C_LABEL};
+        background: {C_SURFACE};
+        border: 1px solid {C_BORDER};
+        border-radius: 8px;
+        padding: 10px 20px;
+        min-height: 22px;
+    }}
+    QPushButton#secondaryBtn:hover {{
+        color: {C_DANGER};
+        border-color: {C_DANGER};
+        background: #fff1f0;
     }}
     QPushButton#primaryBtn {{
         font-family: "{f}";
@@ -478,12 +495,23 @@ class MainWindow(QMainWindow):
         )
         self._tabs.addTab(self._log_text, "运行日志")
 
+        self._btn_clear_login = QPushButton("清除登录")
+        self._btn_clear_login.setObjectName("secondaryBtn")
+        self._btn_clear_login.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_clear_login.setToolTip("删除已保存的登录信息，下次启动需重新登录")
+        self._btn_clear_login.clicked.connect(self._on_clear_login)
+
         self._btn_main = QPushButton("开始上架")
         self._btn_main.setObjectName("primaryBtn")
         self._btn_main.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_main.clicked.connect(self._on_main_button)
         self._set_btn_state("idle")
-        card_layout.addWidget(self._btn_main)
+
+        btn_col = QVBoxLayout()
+        btn_col.setSpacing(10)
+        btn_col.addWidget(self._btn_clear_login)
+        btn_col.addWidget(self._btn_main)
+        card_layout.addLayout(btn_col)
 
         outer_layout.addWidget(card)
 
@@ -494,6 +522,15 @@ class MainWindow(QMainWindow):
         self._btn_main.setStyleSheet(_btn_qss(bg, hover))
         if state == "idle" and self._watch_timer.isActive():
             self._watch_timer.stop()
+
+    def _on_clear_login(self) -> None:
+        if self._btn_state != "idle":
+            QMessageBox.warning(self, "提示", "请先停止上架，再清除登录。")
+            return
+        if clear_login_file():
+            QMessageBox.information(self, "提示", "已清除保存的登录信息，下次启动需重新登录。")
+        else:
+            QMessageBox.information(self, "提示", "当前没有保存的登录信息。")
 
     def _bind_autosave(self) -> None:
         self._edit_price.textChanged.connect(self._schedule_autosave)
@@ -685,6 +722,8 @@ class MainWindow(QMainWindow):
         self._login_event.clear()
         self._stopping = False
         self._finish_signal_sent = False
+        self._tabs.setCurrentIndex(1)
+        self._log("正在启动…")
 
         callbacks = RunnerCallbacks(
             on_log=self._log,

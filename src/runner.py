@@ -248,7 +248,9 @@ class AutomationRunner:
             self._log("正在启动浏览器…")
         self._check_cancel()
 
+        self._log("正在初始化浏览器组件…")
         self._playwright = sync_playwright().start()
+        self._log("正在打开 Chrome…")
         try:
             self._context = open_browser_context(self._playwright, settings=settings)
             self._browser = self._context.browser
@@ -262,6 +264,12 @@ class AutomationRunner:
             self._capture_browser_pid()
 
             self._check_cancel()
+            self._log("正在打开上架页面…")
+            try:
+                self._page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+            except PlaywrightError:
+                pass
+
             ensure_logged_in(
                 self._page,
                 upload_list_url=url,

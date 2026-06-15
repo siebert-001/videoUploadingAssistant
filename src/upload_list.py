@@ -1,22 +1,26 @@
 import random
 from typing import Callable
 
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Page
 
 from src.exceptions import AutomationCancelled, VideoSkipError
 from src.field_settings import VideoFieldSettings
 from src.form_filler import fill_video_form
-from src.video_identity import PendingVideo, list_pending_videos, mark_video_skipped
-
-LIST_READY_SELECTOR = "div.aspect-video.group, div.group.min-w-\\[320px\\]"
-DIALOG_HEADER = "视频编辑"
-SALE_BUTTON_TEXT = "上架销售"
-DIALOG_SELECTOR = "section.dioa-dialog__content"
-
-
-def is_edit_dialog_open(page: Page) -> bool:
-    dialog = page.locator(DIALOG_SELECTOR)
-    return dialog.count() > 0 and dialog.first.is_visible()
+from src.upload_page import (
+    PendingVideo,
+    click_sale_action_at,
+    count_pending_videos,
+    edit_dialog,
+    ensure_pending_tab,
+    is_edit_dialog_open,
+    list_pending_videos,
+    mark_video_skipped,
+    refresh_edit_dialog_marker,
+    scroll_last_sale_into_view,
+    wait_for_edit_dialog,
+    wait_for_dialog_form_ready,
+    wait_for_upload_list_ready,
+)
 
 
 def ensure_page_scrollable(page: Page) -> None:
@@ -35,7 +39,6 @@ def ensure_page_scrollable(page: Page) -> None:
 
 
 def freeze_background_scroll(page: Page) -> None:
-    """记录列表滚动位置；不锁死 overflow，避免测试暂停后无法手动滚动。"""
     page.evaluate("() => { window.__vjshiScrollY = window.scrollY; }")
 
 
@@ -44,32 +47,21 @@ def unfreeze_background_scroll(page: Page) -> None:
 
 
 def wait_for_upload_list(page: Page, *, timeout_ms: int) -> None:
-    if page.get_by_text("您已退出登录", exact=False).count() > 0:
-        raise RuntimeError("未登录或登录已过期，请在浏览器登录后点击「我已登录，继续」。")
-    page.locator(LIST_READY_SELECTOR).first.wait_for(state="visible", timeout=timeout_ms)
-
-
-def pending_sale_buttons(page: Page) -> Locator:
-    return page.get_by_role("button", name=SALE_BUTTON_TEXT, exact=True)
-
-
-def count_pending_videos(page: Page) -> int:
-    return pending_sale_buttons(page).count()
+    wait_for_upload_list_ready(page, timeout_ms=timeout_ms)
 
 
 def scroll_to_load_more(page: Page, *, max_rounds: int = 30) -> int:
-    """向下滚动列表，尽量加载全部待处理项（仅在弹窗未打开时执行）。"""
     if is_edit_dialog_open(page):
         return count_pending_videos(page)
+    ensure_pending_tab(page)
     prev = 0
     for _ in range(max_rounds):
         if is_edit_dialog_open(page):
             break
-        buttons = pending_sale_buttons(page)
-        count = buttons.count()
+        count = count_pending_videos(page)
         if count == 0:
             break
-        buttons.last.scroll_into_view_if_needed()
+        scroll_last_sale_into_view(page)
         page.wait_for_timeout(600)
         if count == prev and count == count_pending_videos(page):
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
@@ -83,48 +75,54 @@ def scroll_to_load_more(page: Page, *, max_rounds: int = 30) -> int:
 def open_edit_dialog_for_index(page: Page, index: int = 0) -> None:
     if is_edit_dialog_open(page):
         return
-    buttons = pending_sale_buttons(page)
-    btn = buttons.nth(index)
-    btn.evaluate(
-        "el => el.scrollIntoView({block: 'nearest', inline: 'nearest'})"
-    )
-    expect(btn).to_be_visible()
-    btn.click()
-
-
-def wait_for_edit_dialog(page: Page, *, timeout_ms: int) -> None:
-    dialog = page.locator(DIALOG_SELECTOR)
-    dialog.wait_for(state="visible", timeout=timeout_ms)
-    expect(dialog.get_by_text(DIALOG_HEADER, exact=True)).to_be_visible(timeout=timeout_ms)
-    freeze_background_scroll(page)
+    url_before = page.url
+    for attempt in range(2):
+        click_sale_action_at(page, index)
+        for _ in range(8):
+            page.wait_for_timeout(500)
+            if is_edit_dialog_open(page):
+                refresh_edit_dialog_marker(page)
+                return
+            if page.url != url_before:
+                return
+        if attempt == 0:
+            page.wait_for_timeout(600)
 
 
 def close_edit_dialog_if_open(page: Page) -> None:
     if not is_edit_dialog_open(page):
         return
-    close_btn = page.locator("button.dioa-dialog__close")
-    if close_btn.count() > 0 and close_btn.first.is_visible():
-        close_btn.first.click()
-        page.locator(DIALOG_SELECTOR).wait_for(state="hidden", timeout=5000)
+    dlg = edit_dialog(page)
+    for sel in (
+        "button.dioa-dialog__close",
+        "[class*='dialog__close']",
+    ):
+        close_btn = dlg.locator(sel)
+        if close_btn.count() > 0 and close_btn.first.is_visible():
+            close_btn.first.click()
+            break
+    else:
+        page.keyboard.press("Escape")
+    edit_dialog(page).wait_for(state="hidden", timeout=5000)
     unfreeze_background_scroll(page)
 
 
 def submit_edit_dialog(page: Page, *, timeout_ms: int) -> None:
-    """点击弹窗底部「提交」按钮。"""
-    dialog = page.locator(DIALOG_SELECTOR)
-    submit_btn = dialog.locator('button[type="submit"]').filter(has_text="提交")
-    if submit_btn.count() == 0:
-        submit_btn = dialog.get_by_role("button", name="提交", exact=True)
-    if submit_btn.count() == 0:
-        submit_btn = page.locator("button.dioa-button__root").filter(has_text="提交")
-    if submit_btn.count() == 0:
-        raise RuntimeError("未找到「提交」按钮。")
-    submit_btn.first.scroll_into_view_if_needed()
-    submit_btn.first.click(force=True)
+    dlg = edit_dialog(page)
+    for loc in (
+        dlg.locator('button[type="submit"]').filter(has_text="提交"),
+        dlg.get_by_role("button", name="提交", exact=True),
+        dlg.locator("button.dioa-button__root").filter(has_text="提交"),
+    ):
+        if loc.count() > 0:
+            loc.first.scroll_into_view_if_needed()
+            loc.first.click(force=True)
+            return
+    raise RuntimeError("未找到「提交」按钮。")
 
 
 def wait_for_edit_dialog_closed(page: Page, *, timeout_ms: int) -> None:
-    page.locator(DIALOG_SELECTOR).wait_for(state="hidden", timeout=timeout_ms)
+    edit_dialog(page).wait_for(state="hidden", timeout=timeout_ms)
     unfreeze_background_scroll(page)
     page.wait_for_timeout(400)
 
@@ -142,7 +140,6 @@ def process_all_pending(
     test_stop_after_submit: int = 0,
     pause_between_videos_sec: tuple[float, float] = (3.0, 6.0),
 ) -> int:
-    """依次处理列表：填写 →（可选）提交 → 下一个，直到列表处理完或测试停止。"""
     def cancelled() -> bool:
         return bool(is_cancelled and is_cancelled())
 
@@ -184,6 +181,8 @@ def process_all_pending(
             open_edit_dialog_for_index(page, index=target.index)
             page.wait_for_timeout(delay_ms)
             wait_for_edit_dialog(page, timeout_ms=timeout_ms)
+            wait_for_dialog_form_ready(page, timeout_ms=timeout_ms)
+            freeze_background_scroll(page)
 
             if on_log:
                 on_log(f"填写第 {step} 个视频信息")

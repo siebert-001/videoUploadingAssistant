@@ -20,6 +20,9 @@ ROOT = BUNDLE_DIR
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 
+LOGIN_FILENAME = "login.json"
+
+
 def _is_bundle_writable() -> bool:
     """Windows 单文件 exe 旁通常可写；macOS .app 内 MacOS 目录只读。"""
     if not getattr(sys, "frozen", False):
@@ -74,7 +77,7 @@ def resource_path(relative: str) -> Path:
 UPLOAD_LIST_URL = "https://www.vjshi.com/user/upload/video"
 
 BROWSER_HEADLESS = False
-BROWSER_SLOW_MO = 80
+BROWSER_SLOW_MO = 0
 BROWSER_TIMEOUT_MS = 30000
 BROWSER_CHANNEL = "chrome"  # 本机 Google Chrome；留空则用 Playwright 自带 Chromium
 BROWSER_REDUCE_AUTOMATION_FLAGS = True
@@ -109,7 +112,26 @@ def _build_settings() -> dict:
 
 
 def init_app() -> None:
-    return
+    if getattr(sys, "frozen", False):
+        data_dir()
+
+
+def login_file_path() -> Path:
+    return data_dir() / LOGIN_FILENAME
+
+
+def login_file_exists() -> bool:
+    path = login_file_path()
+    return path.is_file() and path.stat().st_size > 0
+
+
+def clear_login_file() -> bool:
+    """删除已保存的登录 cookie，下次启动需重新登录。"""
+    path = login_file_path()
+    if path.is_file():
+        path.unlink()
+        return True
+    return False
 
 
 def setup_playwright_env() -> None:
@@ -128,4 +150,7 @@ def load_settings() -> dict:
 
 
 def resolve_path(relative: str) -> Path:
-    return data_dir() / relative.strip().replace("\\", "/")
+    rel = relative.strip().replace("\\", "/")
+    if rel in (LOGIN_FILENAME, f"auth/{LOGIN_FILENAME}"):
+        return login_file_path()
+    return data_dir() / rel
