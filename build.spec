@@ -25,7 +25,7 @@ hiddenimports = [
     "src.field_settings",
     "src.exceptions",
     "src.app_icon",
-    "src.video_identity",
+    "src.upload_page",
     "PySide6.QtCore",
     "PySide6.QtGui",
     "PySide6.QtWidgets",
